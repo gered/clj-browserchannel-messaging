@@ -6,11 +6,21 @@
     goog.net.BrowserChannel
     [goog.events :as events]))
 
+(defonce ^:private handler-middleware (atom nil))
+
 (defonce browser-channel (goog.net.BrowserChannel.))
 
 (defonce incoming-messages (chan))
 (defonce incoming-messages-pub (pub incoming-messages :topic))
 (defonce outgoing-messages (chan))
+
+(defn- run-middleware [middleware final-handler & args]
+  (let [wrap    (fn [handler [f & more]]
+                  (if f
+                    (recur (f handler) more)
+                    handler))
+        handler (wrap final-handler middleware)]
+    (apply handler args)))
 
 (defn encode-message
   "encodes a message composed of a topic and body into a format that can be
@@ -50,18 +60,25 @@
         (handler msg)
         (recur)))))
 
-(defn- handle-outgoing [channel on-send]
+(defn- handle-outgoing [channel]
   (go-loop []
     (when-let [msg (<! outgoing-messages)]
-      (when-let [encoded (encode-message msg)]
-        (if on-send (on-send msg))
-        (.sendMap channel encoded))
+      (run-middleware
+        (:on-send @handler-middleware)
+        (fn [msg]
+          (if-let [encoded (encode-message msg)]
+            (.sendMap channel encoded)))
+        msg)
       (recur))))
 
-(defn- handle-incoming [channel msg on-receive]
+(defn- handle-incoming [channel msg]
   (when-let [decoded (decode-message msg)]
-    (if on-receive (on-receive decoded))
-    (put! incoming-messages decoded)))
+    (run-middleware
+      (:on-receive @handler-middleware)
+      (fn [msg]
+        (if msg
+          (put! incoming-messages msg)))
+      decoded)))
 
 ; see: http://docs.closure-library.googlecode.com/git/local_closure_goog_net_browserchannel.js.source.html#line521
 (def bch-error-enum-to-keyword
@@ -81,37 +98,78 @@
   (or (get bch-error-enum-to-keyword error-code)
       :unknown))
 
-(defn- handler [{:keys [on-open on-send on-receive on-close on-error]}]
+(defn- ->handler []
   (let [h (goog.net.BrowserChannel.Handler.)]
     (set! (.-channelOpened h)
           (fn [channel]
-            (if on-open (on-open))
-            (handle-outgoing channel on-send)))
+            (run-middleware (:on-open @handler-middleware) (fn []))
+            (handle-outgoing channel)))
     (set! (.-channelHandleArray h)
           (fn [channel msg]
-            (handle-incoming channel msg on-receive)))
+            (handle-incoming channel msg)))
     (set! (.-channelClosed h)
           (fn [channel pending undelivered]
-            (if on-close (on-close pending undelivered))))
+            (run-middleware
+              (:on-close @handler-middleware)
+              (fn [pending undelivered]
+                ; no-op
+                )
+              pending undelivered)))
     (set! (.-channelError h)
           (fn [channel error]
-            (if on-error (on-error (bch-error-enum->keyword error)))))
+            (run-middleware
+              (:on-error @handler-middleware)
+              (fn [error]
+                ; no-op
+                )
+              (bch-error-enum->keyword error))))
     h))
 
 (defn- set-debug-logger! [level]
   (if-let [logger (-> browser-channel .getChannelDebug .getLogger)]
     (.setLevel logger level)))
 
+(defn- get-handlers [middleware k]
+  (->> middleware (map k) (remove nil?) (doall)))
+
+(defn- register-middleware! [middleware]
+  (reset!
+    handler-middleware
+    {:on-open    (get-handlers middleware :on-open)
+     :on-close   (get-handlers middleware :on-close)
+     :on-error   (get-handlers middleware :on-error)
+     :on-receive (get-handlers middleware :on-receive)
+     :on-send    (get-handlers middleware :on-send)}))
+
 (defn init!
-  "sets up browserchannel for use, creating a handler with the specified
+  "Sets up browserchannel for use, creating a handler with the specified
    properties. this function should be called once on page load.
 
-   properties:
-
    :base - the base URL on which the server's browserchannel routes are
-           located at. default is '/browserchannel'
+           located at. default if not specified is '/browserchannel'
 
-   callbacks:
+   :middleware - a vector of middleware maps.
+
+   Middleware is optional. If specificed, each middleware is provided as a
+   'middleware map'. This is a map where functions are specified for one
+   or more of :on-open, :on-close, :on-error, :on-send, :on-receive. A
+   middleware map need not provide a function for any events it is
+   not doing any processing for.
+
+   Each middleware function looks like a Ring middleware function. They
+   are passed a handler and should return a function which performs the
+   actual middleware processing and calls handler to continue on down
+   the chain of middleware. e.g.
+
+   {:on-send (fn [handler]
+               (fn [{:keys [topic body] :as msg]
+                 ; do something here with the message to be sent
+                 (handler msg)))}
+
+   Remember that middleware is run in the reverse order that they appear
+   in the vector you pass in.
+
+   Middleware function descriptions:
 
    :on-open
    occurs when a browserchannel session with the server is established
@@ -131,9 +189,7 @@
 
    :on-send
    raised whenever a message is sent via the send function. receives 1
-   argument: the message that is to be sent. this is probably only useful for
-   debugging/logging purposes. note that this event is only raised for messages
-   which can be encoded by encode-message
+   argument: the message that is to be sent.
 
    :on-receive
    occurs whenever a browserchannel message is received from the server.
@@ -141,15 +197,16 @@
    only raised for messages which can be decoded by decode-message. also note
    that this event is raised for all messages received, regardless of any
    listeners created via message-handler."
-  [& [{:keys [base] :as opts}]]
+  [& {:keys [base middleware]}]
   (let [base (or base "/browserchannel")]
+    (register-middleware! middleware)
     (events/listen
       js/window "unload"
       (fn []
         (.disconnect browser-channel)
         (events/removeAll)))
     (set-debug-logger! goog.debug.Logger.Level.OFF)
-    (.setHandler browser-channel (handler opts))
+    (.setHandler browser-channel (->handler))
     (.connect browser-channel
               (str base "/test")
               (str base "/bind"))))
