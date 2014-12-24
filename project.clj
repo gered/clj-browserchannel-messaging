@@ -9,5 +9,16 @@
                  [org.clojure/core.async "0.1.346.0-17112a-alpha"]
                  [net.thegeez/clj-browserchannel-server "0.1.0"]]
 
-  :source-paths   ["src/clj"]
-  :resource-paths ["src/cljs"])
+  :source-paths   ["target/generated/src/clj" "src/clj"]
+  :resource-paths ["target/generated/src/cljs" "src/cljs"]
+
+  :profiles {:dev {:plugins [[com.keminglabs/cljx "0.5.0"]]}}
+
+  :cljx {:builds [{:source-paths ["src/cljx"]
+                   :output-path "target/generated/src/clj"
+                   :rules :clj}
+                  {:source-paths ["src/cljx"]
+                   :output-path "target/generated/src/cljs"
+                   :rules :cljs}]}
+
+  :prep-tasks [["cljx" "once"]])

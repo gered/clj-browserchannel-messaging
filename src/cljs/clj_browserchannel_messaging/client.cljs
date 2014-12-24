@@ -4,7 +4,8 @@
     [cljs.reader :as reader]
     [cljs.core.async :refer [pub sub chan <! put!]]
     goog.net.BrowserChannel
-    [goog.events :as events]))
+    [goog.events :as events]
+    [clj-browserchannel-messaging.utils :refer [run-middleware get-handlers encode-message decode-message]]))
 
 (defonce ^:private handler-middleware (atom nil))
 
@@ -13,34 +14,6 @@
 (defonce incoming-messages (chan))
 (defonce incoming-messages-pub (pub incoming-messages :topic))
 (defonce outgoing-messages (chan))
-
-(defn- run-middleware [middleware final-handler & args]
-  (let [wrap    (fn [handler [f & more]]
-                  (if f
-                    (recur (f handler) more)
-                    handler))
-        handler (wrap final-handler middleware)]
-    (apply handler args)))
-
-(defn encode-message
-  "encodes a message composed of a topic and body into a format that can be
-   sent via browserchannel. topic should be a keyword while body can be
-   anything. returns nil if the message could not be encoded."
-  [{:keys [topic body] :as msg}]
-  (if-let [topic (name topic)]
-    (clj->js {"topic" topic
-              "body"  (pr-str body)})))
-
-(defn decode-message
-  "decodes a message received via browserchannel into a map composed of a
-   topic and body. returns nil if the message could not be decoded."
-  [msg]
-  (let [msg   (js->clj msg)
-        topic (keyword (get msg "topic"))
-        body  (get msg "body")]
-    (if topic
-      {:topic topic
-       :body  (reader/read-string body)})))
 
 (defn send
   "sends a browserchannel message to the server asynchronously."
@@ -67,12 +40,12 @@
         (:on-send @handler-middleware)
         (fn [msg]
           (if-let [encoded (encode-message msg)]
-            (.sendMap channel encoded)))
+            (.sendMap channel (clj->js encoded))))
         msg)
       (recur))))
 
 (defn- handle-incoming [channel msg]
-  (when-let [decoded (decode-message msg)]
+  (when-let [decoded (decode-message (js->clj msg))]
     (run-middleware
       (:on-receive @handler-middleware)
       (fn [msg]
@@ -128,9 +101,6 @@
 (defn- set-debug-logger! [level]
   (if-let [logger (-> browser-channel .getChannelDebug .getLogger)]
     (.setLevel logger level)))
-
-(defn- get-handlers [middleware k]
-  (->> middleware (map k) (remove nil?) (doall)))
 
 (defn- register-middleware! [middleware]
   (reset!

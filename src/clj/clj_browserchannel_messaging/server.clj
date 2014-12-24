@@ -2,39 +2,13 @@
   (:refer-clojure :exclude [send])
   (:require [clojure.edn :as edn]
             [clojure.core.async :refer [chan pub sub <! put! go-loop]]
-            [net.thegeez.browserchannel :as browserchannel]))
+            [net.thegeez.browserchannel :as browserchannel]
+            [clj-browserchannel-messaging.utils :refer [run-middleware get-handlers encode-message decode-message]]))
 
 (defonce ^:private handler-middleware (atom nil))
 
 (defonce incoming-messages (chan))
 (defonce incoming-messages-pub (pub incoming-messages :topic))
-
-(defn- run-middleware [middleware final-handler & args]
-  (let [wrap    (fn [handler [f & more]]
-                  (if f
-                    (recur (f handler) more)
-                    handler))
-        handler (wrap final-handler middleware)]
-    (apply handler args)))
-
-(defn encode-message
-  "encodes a message made up of a topic and body into a format that can be sent
-   via browserchannel to a client. topic should be a keyword, while body can be
-   any Clojure data structure. returns nil if the message could not be encoded."
-  [{:keys [topic body] :as msg}]
-  (if-let [topic (if topic (name topic))]
-    {"topic" topic
-     "body"  (pr-str body)}))
-
-(defn decode-message
-  "decodes a message received via browserchannel into a map composed of a
-   topic and body. returns nil if the message could not be decoded."
-  [msg]
-  (let [topic (get msg "topic")
-        body  (get msg "body")]
-    (if topic
-      {:topic (keyword topic)
-       :body  (edn/read-string body)})))
 
 (defn send
   "sends a browserchannel message to a client identified by the given
@@ -110,9 +84,7 @@
    (this differs from net.thegeez.browserchannel/wrap-browserchannel).
 
    In addition, you can pass event handler functions. Note that the return
-   value for all of these handlers is not used.
-
-"
+   value for all of these handlers is not used."
   [handler & [opts]]
   (-> handler
       (browserchannel/wrap-browserchannel
@@ -122,9 +94,6 @@
           :on-session
           (fn [browserchannel-session-id request]
             (handle-session browserchannel-session-id request))))))
-
-(defn- get-handlers [middleware k]
-  (->> middleware (map k) (remove nil?) (doall)))
 
 (defn init!
   "Sets up browserchannel for server-side use. This function should be called
