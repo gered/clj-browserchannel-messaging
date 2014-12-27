@@ -13,12 +13,18 @@
 
 (defonce incoming-messages (chan))
 (defonce incoming-messages-pub (pub incoming-messages :topic))
-(defonce outgoing-messages (chan))
 
 (defn send
   "sends a browserchannel message to the server asynchronously."
   [topic body]
-  (put! outgoing-messages {:topic topic :body body}))
+  (let [msg {:topic topic
+             :body  body}]
+    (run-middleware
+      (:on-send @handler-middleware)
+      (fn [msg]
+        (if-let [encoded (encode-message msg)]
+          (.sendMap browser-channel (clj->js encoded))))
+      msg)))
 
 (defn message-handler
   "listens for incoming browserchannel messages with the specified topic.
@@ -32,17 +38,6 @@
       (when-let [msg (<! incoming-topic-messages)]
         (handler msg)
         (recur)))))
-
-(defn- handle-outgoing [channel]
-  (go-loop []
-    (when-let [msg (<! outgoing-messages)]
-      (run-middleware
-        (:on-send @handler-middleware)
-        (fn [msg]
-          (if-let [encoded (encode-message msg)]
-            (.sendMap channel (clj->js encoded))))
-        msg)
-      (recur))))
 
 (defn- handle-incoming [channel msg]
   (when-let [decoded (decode-message (js->clj msg))]
@@ -75,8 +70,7 @@
   (let [h (goog.net.BrowserChannel.Handler.)]
     (set! (.-channelOpened h)
           (fn [channel]
-            (run-middleware (:on-open @handler-middleware) (fn []))
-            (handle-outgoing channel)))
+            (run-middleware (:on-open @handler-middleware) (fn []))))
     (set! (.-channelHandleArray h)
           (fn [channel msg]
             (handle-incoming channel msg)))
