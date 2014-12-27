@@ -12,24 +12,24 @@
 
 (defn send
   "sends a browserchannel message to a client identified by the given
-   browserchannel session id. topic should be a keyword, while body can be
+   browserchannel client id. topic should be a keyword, while body can be
    anything. returns nil if the message was not sent."
-  [browserchannel-session-id topic body]
+  [client-id topic body]
   (let [msg {:topic topic
              :body  body}]
     (run-middleware
       (:on-send @handler-middleware)
-      (fn [browserchannel-session-id msg]
+      (fn [client-id msg]
         (if-let [encoded (encode-message msg)]
-          (browserchannel/send-map browserchannel-session-id encoded)))
-      browserchannel-session-id msg)))
+          (browserchannel/send-map client-id encoded)))
+      client-id msg)))
 
 (defn message-handler
   "listens for incoming browserchannel messages with the specified topic.
    executes the passed handler function when any are received. handler should
    be a function which accepts the received decoded message. the decoded
-   message will contain the browserchannel session id of the client that
-   sent the message under :browserchannel-session-id.
+   message will contain the browserchannel client id of the client that
+   sent the message under :client-id.
    note that the handler is executed asynchronously."
   [topic handler]
   (let [incoming-topic-messages (chan)]
@@ -39,37 +39,37 @@
         (handler msg)
         (recur)))))
 
-(defn- handle-session [browserchannel-session-id req]
+(defn- handle-session [client-id req]
   (run-middleware
     (:on-open @handler-middleware)
-    (fn [browserchannel-session-id request]
+    (fn [client-id request]
       ; no-op
       )
-    browserchannel-session-id req)
+    client-id req)
 
   (browserchannel/add-listener
-    browserchannel-session-id
+    client-id
     :close
     (fn [request reason]
       (run-middleware
         (:on-close @handler-middleware)
-        (fn [browserchannel-session-id request reason]
+        (fn [client-id request reason]
           ; no-op
           )
-        browserchannel-session-id request reason)))
+        client-id request reason)))
 
   (browserchannel/add-listener
-    browserchannel-session-id
+    client-id
     :map
     (fn [request m]
       (if-let [decoded (decode-message m)]
-        (let [msg (assoc decoded :browserchannel-session-id browserchannel-session-id)]
+        (let [msg (assoc decoded :client-id client-id)]
           (run-middleware
             (:on-receive @handler-middleware)
-            (fn [browserchannel-session-id request msg]
+            (fn [client-id request msg]
               (if msg
                 (put! incoming-messages msg)))
-            browserchannel-session-id request msg))))))
+            client-id request msg))))))
 
 (defn wrap-browserchannel
   "Middleware to handle server-side browserchannel session and message
@@ -97,8 +97,8 @@
           (assoc
             opts
             :on-session
-            (fn [browserchannel-session-id request]
-              (handle-session browserchannel-session-id request)))))))
+            (fn [client-id request]
+              (handle-session client-id request)))))))
 
 (defn init!
   "Sets up browserchannel for server-side use. This function should be called
@@ -118,9 +118,9 @@
    the chain of middleware. e.g.
 
    {:on-send (fn [handler]
-               (fn [session-id request {:keys [topic body] :as msg]
+               (fn [client-id request {:keys [topic body] :as msg]
                  ; do something here with the message to be sent
-                 (handler session-id request msg)))}
+                 (handler client-id request msg)))}
 
    Remember that middleware is run in the reverse order that they appear
    in the vector you pass in.
@@ -129,24 +129,24 @@
 
    :on-open
    Occurs when a new browserchannel session has been established. Receives 2
-   arguments: the browserchannel session id and the request map (for the
+   arguments: the browserchannel client id and the request map (for the
    request that resulted in the browserchannel session being established) as
    arguments.
 
    :on-receive
    Occurs when a new message is received from a client. Receives 3 arguments:
-   the browserchannel session id, the request map (for the client request that
+   the browserchannel client id, the request map (for the client request that
    the message was sent with), and the actual decoded message as arguments.
-   the browserchannel session id of the client that sent the message is
-   automatically added to the message under :browserchannel-session-id.
+   the browserchannel client id of the client that sent the message is
+   automatically added to the message under :client-id.
 
    :on-send
    Occurs when a message is to be sent to a client. Receives 2 arguments:
-   the browserchannel session id and the actual message to be sent.
+   the browserchannel client id and the actual message to be sent.
 
    :on-close
    Occurs when the browserchannel session is closed. Receives 3 arguments: the
-   browserchannel session id, the request map (for the request sent by the
+   browserchannel client id, the request map (for the request sent by the
    client causing the session to be closed, if any), and a string containing
    the reason for the session close. Note that, this may or may not be
    initiated directly by the client. The request argument will be nil if the
