@@ -78,22 +78,27 @@
    You can specify the same set of options that
    net.thegeez.browserchannel/wrap-browserchannel accepts, except for
    :on-session (which will be overridden even if you do try to pass it).
-   See net.thegeez.browserchannel/default-options for more info.
 
-   Note that if :base is not specified, the default is '/browserchannel'
-   (this differs from net.thegeez.browserchannel/wrap-browserchannel).
+   See net.thegeez.browserchannel/default-options for more info on available
+   options and what the defaults are. Some defaults are different when
+   using this middleware:
 
-   In addition, you can pass event handler functions. Note that the return
-   value for all of these handlers is not used."
+   :base \"/browserchannel\"
+   :keep-alive-interval 20
+   :session-timeout-interval 30"
   [handler & [opts]]
-  (-> handler
-      (browserchannel/wrap-browserchannel
-        (assoc
-          opts
-          :base (or (:base opts) "/browserchannel")
-          :on-session
-          (fn [browserchannel-session-id request]
-            (handle-session browserchannel-session-id request))))))
+  (let [opts (merge
+               {:base                     "/browserchannel"
+                :keep-alive-interval      20
+                :session-timeout-interval 30}
+               opts)]
+    (-> handler
+        (browserchannel/wrap-browserchannel
+          (assoc
+            opts
+            :on-session
+            (fn [browserchannel-session-id request]
+              (handle-session browserchannel-session-id request)))))))
 
 (defn init!
   "Sets up browserchannel for server-side use. This function should be called

@@ -176,6 +176,8 @@
         (.disconnect browser-channel)
         (events/removeAll)))
     (set-debug-logger! goog.debug.Logger.Level.OFF)
+    ; this seems to help prevent premature session timeouts from occuring (vs the default of 3)
+    (set! goog.net.BrowserChannel/BACK_CHANNEL_MAX_RETRIES 20)
     (.setHandler browser-channel (->handler))
     (.connect browser-channel
               (str base "/test")
