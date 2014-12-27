@@ -1,4 +1,4 @@
-(defproject clj-browserchannel-messaging "0.0.2"
+(defproject clj-browserchannel-messaging "0.0.3"
   :description  "Tools for quickly using BrowserChannel for bi-directional client-server messaging."
   :url          "https://github.com/gered/clj-browserchannel-messaging"
   :license      {:name "MIT License"
