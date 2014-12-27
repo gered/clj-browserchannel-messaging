@@ -1,9 +1,10 @@
 (ns clj-browserchannel-messaging.server
   (:refer-clojure :exclude [send])
-  (:require [clojure.edn :as edn]
-            [clojure.core.async :refer [chan pub sub <! put! go-loop]]
-            [net.thegeez.browserchannel :as browserchannel]
-            [clj-browserchannel-messaging.utils :refer [run-middleware get-handlers encode-message decode-message]]))
+  (:require
+    [clojure.edn :as edn]
+    [clojure.core.async :refer [chan pub sub <! put! go-loop]]
+    [net.thegeez.browserchannel :as browserchannel]
+    [clj-browserchannel-messaging.utils :refer [run-middleware get-handlers encode-message decode-message]]))
 
 (defonce ^:private handler-middleware (atom nil))
 

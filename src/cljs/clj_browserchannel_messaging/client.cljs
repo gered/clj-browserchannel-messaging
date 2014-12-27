@@ -1,10 +1,12 @@
 (ns clj-browserchannel-messaging.client
-  (:require-macros [cljs.core.async.macros :refer [go-loop]])
+  (:require-macros
+    [cljs.core.async.macros :refer [go-loop]])
   (:require
     [cljs.reader :as reader]
     [cljs.core.async :refer [pub sub chan <! put!]]
     goog.net.BrowserChannel
     [goog.events :as events]
+    [dommy.core :refer-macros [sel1]]
     [clj-browserchannel-messaging.utils :refer [run-middleware get-handlers encode-message decode-message]]))
 
 (defonce ^:private handler-middleware (atom nil))
@@ -105,6 +107,9 @@
      :on-receive (get-handlers middleware :on-receive)
      :on-send    (get-handlers middleware :on-send)}))
 
+(defn- get-anti-forgery-token []
+  (.-content (sel1 "meta[name='anti-forgery-token']")))
+
 (defn init!
   "Sets up browserchannel for use, creating a handler with the specified
    properties. this function should be called once on page load.
@@ -160,9 +165,18 @@
    receives 1 argument: the message that was received. note that this event is
    only raised for messages which can be decoded by decode-message. also note
    that this event is raised for all messages received, regardless of any
-   listeners created via message-handler."
+   listeners created via message-handler.
+
+   CSRF Anti-Forgery Tokens
+
+   If the page contains a <meta> tag with a name of 'anti-forgery-token',
+   the value of this meta tag will be automatically included under the
+   X-CSRF-Token HTTP header on all BrowserChannel POST requests to work with
+   any CSRF protection your web app uses (e.g. Ring's wrap-anti-forgery
+   middleware)."
   [& {:keys [base middleware]}]
-  (let [base (or base "/browserchannel")]
+  (let [base               (or base "/browserchannel")
+        anti-forgery-token (get-anti-forgery-token)]
     (register-middleware! middleware)
     (events/listen
       js/window "unload"
@@ -173,6 +187,8 @@
     ; this seems to help prevent premature session timeouts from occuring (vs the default of 3)
     (set! goog.net.BrowserChannel/BACK_CHANNEL_MAX_RETRIES 20)
     (.setHandler browser-channel (->handler))
+    (if anti-forgery-token
+      (.setExtraHeaders browser-channel (js-obj "X-CSRF-Token" anti-forgery-token)))
     (.connect browser-channel
               (str base "/test")
               (str base "/bind"))))
