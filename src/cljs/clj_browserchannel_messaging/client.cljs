@@ -118,6 +118,11 @@
    :base - the base URL on which the server's browserchannel routes are
            located at. default if not specified is '/browserchannel'
 
+   :callback - optional function that receives no arguments which will
+               get called once the browserchannel session is established
+               (useful if your cljs app init should not be run until an
+               active browserchannel session is available)
+
    :middleware - a vector of middleware maps.
 
    Middleware is optional. If specificed, each middleware is provided as a
@@ -175,9 +180,16 @@
    X-CSRF-Token HTTP header on all BrowserChannel POST requests to work with
    any CSRF protection your web app uses (e.g. Ring's wrap-anti-forgery
    middleware)."
-  [& {:keys [base middleware]}]
+  [& {:keys [base middleware callback]}]
   (let [base               (or base "/browserchannel")
-        anti-forgery-token (get-anti-forgery-token)]
+        anti-forgery-token (get-anti-forgery-token)
+        middleware         (if callback
+                             (cons
+                               {:on-open (fn [handler]
+                                           (fn []
+                                             (callback)
+                                             (handler)))}
+                               middleware))]
     (register-middleware! middleware)
     (events/listen
       js/window "unload"
