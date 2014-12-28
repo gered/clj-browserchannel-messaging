@@ -108,7 +108,8 @@
      :on-send    (get-handlers middleware :on-send)}))
 
 (defn- get-anti-forgery-token []
-  (.-content (sel1 "meta[name='anti-forgery-token']")))
+  (if-let [tag (sel1 "meta[name='anti-forgery-token']")]
+    (.-content tag)))
 
 (defn init!
   "Sets up browserchannel for use, creating a handler with the specified
