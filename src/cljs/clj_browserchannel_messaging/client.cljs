@@ -5,12 +5,14 @@
     [cljs.reader :as reader]
     [cljs.core.async :refer [pub sub chan <! put!]]
     goog.net.BrowserChannel
+    goog.net.BrowserChannel.State
     [goog.events :as events]
     [dommy.core :refer-macros [sel1]]
     [clj-browserchannel-messaging.utils :refer [run-middleware get-handlers encode-message decode-message]]))
 
 (defonce ^:private handler-middleware (atom nil))
 
+(defonce ^:private connect-opts (atom {}))
 (defonce browser-channel (goog.net.BrowserChannel.))
 
 (defonce incoming-messages (chan))
@@ -72,12 +74,16 @@
   (let [h (goog.net.BrowserChannel.Handler.)]
     (set! (.-channelOpened h)
           (fn [channel]
+            (if-let [on-connect (:on-connect @connect-opts)]
+              (on-connect))
             (run-middleware (:on-open @handler-middleware) (fn []))))
     (set! (.-channelHandleArray h)
           (fn [channel msg]
             (handle-incoming channel msg)))
     (set! (.-channelClosed h)
           (fn [channel pending undelivered]
+            (if-let [on-disconnect (:on-disconnect @connect-opts)]
+              (on-disconnect))
             (run-middleware
               (:on-close @handler-middleware)
               (fn [pending undelivered]
@@ -111,6 +117,39 @@
   (if-let [tag (sel1 "meta[name='anti-forgery-token']")]
     (.-content tag)))
 
+(defn connected?
+  "Returns true if a browserchannel session is currently established with
+   the server."
+  []
+  (= (.getState browser-channel) goog.net.BrowserChannel.State/OPENED))
+
+(defn connect!
+  "Initiates a browserchannel connection with the server. Note that
+   init! calls this function, so you only need to use this if the
+   connection closes for any reason and needs to be reopened.
+
+   When a connection is established, the on-connect callback provided to
+   init! will be invoked (if it was provided). This will occur before
+   any middleware(s) are processed."
+  []
+  (let [state (.getState browser-channel)]
+    (if (or (= state goog.net.BrowserChannel.State/CLOSED)
+            (= state goog.net.BrowserChannel.State/INIT))
+      (.connect
+        browser-channel
+        (:test-path @connect-opts)
+        (:channel-path @connect-opts)))))
+
+(defn disconnect!
+  "Closes the browserchannel connection with the server.
+
+   When the disconnection finishes, the on-disconnect callback provided
+   to init! will be invoked (if it was provided). This will occur before
+   any middleware(s) are processed."
+  []
+  (if (not= (.getState browser-channel) goog.net.BrowserChannel.State/CLOSED)
+    (.disconnect browser-channel)))
+
 (defn init!
   "Sets up browserchannel for use, creating a handler with the specified
    properties. this function should be called once on page load.
@@ -118,10 +157,15 @@
    :base - the base URL on which the server's browserchannel routes are
            located at. default if not specified is '/browserchannel'
 
-   :callback - optional function that receives no arguments which will
-               get called once the browserchannel session is established
-               (useful if your cljs app init should not be run until an
-               active browserchannel session is available)
+   :on-connect - optional function that will be called once a
+                 browserchannel session is established with the server.
+                 this function receives no arguments. it will be invoked
+                 before any middleware(s) are processed.
+
+   :on-disconnect - optional function that will be called once the
+                    browserchannel session is closed for any reason. this
+                    function receives no arguments. it will be invoked
+                    before any middleware(s) are processed.
 
    :middleware - a vector of middleware maps.
 
@@ -180,21 +224,14 @@
    X-CSRF-Token HTTP header on all BrowserChannel POST requests to work with
    any CSRF protection your web app uses (e.g. Ring's wrap-anti-forgery
    middleware)."
-  [& {:keys [base middleware callback]}]
+  [& {:keys [base middleware on-connect on-disconnect]}]
   (let [base               (or base "/browserchannel")
-        anti-forgery-token (get-anti-forgery-token)
-        middleware         (if callback
-                             (cons
-                               {:on-open (fn [handler]
-                                           (fn []
-                                             (callback)
-                                             (handler)))}
-                               middleware))]
+        anti-forgery-token (get-anti-forgery-token)]
     (register-middleware! middleware)
     (events/listen
       js/window "unload"
       (fn []
-        (.disconnect browser-channel)
+        (disconnect!)
         (events/removeAll)))
     (set-debug-logger! goog.debug.Logger.Level.OFF)
     ; this seems to help prevent premature session timeouts from occuring (vs the default of 3)
@@ -202,6 +239,8 @@
     (.setHandler browser-channel (->handler))
     (if anti-forgery-token
       (.setExtraHeaders browser-channel (js-obj "X-CSRF-Token" anti-forgery-token)))
-    (.connect browser-channel
-              (str base "/test")
-              (str base "/bind"))))
+    (reset! connect-opts {:test-path     (str base "/test")
+                          :channel-path  (str base "/bind")
+                          :on-connect    on-connect
+                          :on-disconnect on-disconnect})
+    (connect!)))
