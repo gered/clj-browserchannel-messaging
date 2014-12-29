@@ -101,6 +101,19 @@
             (fn [client-id request]
               (handle-session client-id request)))))))
 
+(defn connected?
+  "Returns true if the specified client currently has an active
+   browserchannel session established."
+  [client-id]
+  (contains? @browserchannel/sessions client-id))
+
+(defn disconnect!
+  "Forcibly disconnects a client's browserchannel session. If the specified
+   client is not valid / not connected, nothing happens and nil is returned."
+  [client-id & [reason]]
+  (if-let [session-agent (get @browserchannel/sessions client-id)]
+    (send-off session-agent browserchannel/close nil (or reason "Disconnected"))))
+
 (defn init!
   "Sets up browserchannel for server-side use. This function should be called
    once during application startup.
